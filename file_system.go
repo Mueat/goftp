@@ -214,6 +214,10 @@ func (c *Client) controlStringList(f string, args ...interface{}) ([]string, err
 
 	code, msg, err := pconn.sendCommand(cmd)
 
+	if err != nil {
+		return nil, err
+	}
+
 	if !positiveCompletionReply(code) {
 		pconn.debug("unexpected response to %s: %d-%s", cmd, code, msg)
 		return nil, ftpError{code: code, msg: msg}

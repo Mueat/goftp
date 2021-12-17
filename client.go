@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -148,6 +149,9 @@ type Config struct {
 	// neither complete nor downgrade to PASV successfully by themselves, resulting in
 	// hung connections.
 	DisableEPSV bool
+
+	// Use coustom net.Conn
+	CustomDail func(netWrok, host string, timeout time.Duration) (net.Conn, error)
 
 	// For testing convenience.
 	stubResponses map[string]stubResponse
@@ -369,15 +373,36 @@ func (c *Client) openConn(idx int, host string) (pconn *persistentConn, err erro
 
 	var conn net.Conn
 
+	if c.config.CustomDail != nil {
+		conn, err = c.config.CustomDail("tcp", host, c.config.Timeout)
+	} else {
+		conn, err = net.DialTimeout("tcp", host, c.config.Timeout)
+	}
+
 	if c.config.TLSConfig != nil && c.config.TLSMode == TLSImplicit {
 		pconn.debug("opening TLS control connection to %s", host)
-		dialer := &net.Dialer{
-			Timeout: c.config.Timeout,
+		// dialer := &net.Dialer{
+		// 	Timeout: c.config.Timeout,
+		// }
+		// conn, err = tls.DialWithDialer(dialer, "tcp", host, pconn.config.TLSConfig)
+
+		config := c.config.TLSConfig
+		colonPos := strings.LastIndex(host, ":")
+		if colonPos == -1 {
+			colonPos = len(host)
 		}
-		conn, err = tls.DialWithDialer(dialer, "tcp", host, pconn.config.TLSConfig)
-	} else {
-		pconn.debug("opening control connection to %s", host)
-		conn, err = net.DialTimeout("tcp", host, c.config.Timeout)
+		hostname := host[:colonPos]
+
+		// If no ServerName is set, infer the ServerName
+		// from the hostname we're connecting to.
+		if config.ServerName == "" {
+			// Make a copy to avoid polluting argument or default.
+			c := config.Clone()
+			c.ServerName = hostname
+			config = c
+		}
+
+		conn = tls.Client(conn, config)
 	}
 
 	var (
