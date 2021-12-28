@@ -6,8 +6,10 @@ package goftp
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -45,6 +47,29 @@ func (c *Client) Rename(from, to string) error {
 	}
 
 	return pconn.sendCommandExpected(replyFileActionOkay, "RNTO %s", to)
+}
+
+// MkdirAll creates a directory named dirpath,
+// along with any necessary parents, and returns nil,
+// or else returns an error.
+// If dirpath is already a directory, MkdirAll does nothing
+// and returns nil.
+func (c *Client) MkdirAll(dirpath string) error {
+	_, err := c.ExistsDir(dirpath)
+	if err == nil {
+		return nil
+	}
+
+	err = c.MkdirAll(path.Dir(dirpath))
+	if err != nil {
+		return err
+	}
+
+	_, err = c.Mkdir(dirpath)
+	if err != nil {
+		_, err = c.ExistsDir(dirpath)
+	}
+	return err
 }
 
 // Mkdir creates directory "path". The returned string is how the client
@@ -115,6 +140,40 @@ func (c *Client) Getwd() (string, error) {
 func commandNotSupporterdError(err error) bool {
 	respCode := err.(ftpError).Code()
 	return respCode == replyCommandSyntaxError || respCode == replyCommandNotImplemented
+}
+
+// check file or directory exists, if exists return os.FileInfo
+func (c *Client) Exists(filepath string) (os.FileInfo, error) {
+	name := path.Base(filepath)
+	dir := path.Dir(filepath)
+	listPath := path.Join(dir, "*"+name)
+	fis, err := c.ReadDir(listPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(fis) == 0 {
+		return nil, os.ErrNotExist
+	}
+
+	for _, fi := range fis {
+		if fi.Name() == name {
+			return fi, nil
+		}
+	}
+
+	return nil, os.ErrNotExist
+}
+
+func (c *Client) ExistsDir(dirpath string) (os.FileInfo, error) {
+	fi, err := c.Exists(dirpath)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.IsDir() {
+		return nil, errors.New("The path is not a directory")
+	}
+	return fi, nil
 }
 
 // ReadDir fetches the contents of a directory, returning a list of
